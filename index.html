@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Cormorant:wght@400;500;600&display=swap" rel="stylesheet">
+
+<title>Hex Map (51x32 flat-top, offset)</title>
+<style>
+body { margin:0; height:100vh; font-family: "Cormorant", serif; }
+
+label, .hint, button, input, textarea { font-family: "Cormorant", serif; }
+#hexId { font-family: "IM Fell English SC", serif; }
+
+#app { height:100vh; display:grid; grid-template-columns: 1fr 360px; }
+
+#left{
+  background-image: url("WaterBackground.jpeg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  min-width:0;
+  overflow:auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#wrap { padding:16px; }
+#grid { display:block; border-radius:16px; }
+#status { color:#aaa; font-size:12px; margin-top:10px; }
+
+#panel {
+  width:360px;
+  padding:14px;
+  box-sizing:border-box;
+  overflow:auto;
+
+  background-image: url("WoodPanel3.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+
+  border-left:1px solid #ddd;
+
+  position: relative; /* anchor icon popover */
+}
+
+label { display:block; font-size:36px; margin-top:10px; color:#333; }
+input, textarea { width:100%; box-sizing:border-box; padding:8px; border:1px solid #ccc; border-radius:10px; background:white; font-size: 18px; }
+textarea { height:210px; resize:vertical; }
+
+.row { display:flex; gap:10px; margin-top:10px; }
+.row > * { flex:1; }
+
+button { margin-top:10px; padding:8px 10px; border:1px solid #bbb; border-radius:10px; background:white; cursor:pointer; }
+button:hover { background:#eee; }
+
+.hint { font-size:18px; color:#666; margin-top:6px; }
+.palette { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.swatch { width:26px; height:26px; border-radius:8px; border:1px solid rgba(0,0,0,0.15); cursor:pointer; }
+
+button {
+  box-sizing: border-box;
+}
+
+/* ---- Palette row: force all controls to be identical size ---- */
+.palette-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.palette-row > *{ flex:0 0 auto; }
+#palette{
+  flex:1 1 auto;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:0px; /* keep existing spacing */
+}
+
+/* Swatches */
+.swatch{
+  width:26px;
+  height:26px;
+  min-width:26px;
+  min-height:26px;
+  border-radius:8px;
+  border:1px solid rgba(0,0,0,0.15);
+  box-sizing:border-box;
+  cursor:pointer;
+}
+
+/* Shared box metrics for color input + buttons */
+#color,
+#clearColor,
+#iconBtn{
+  width:26px;
+  height:26px;
+  min-width:26px;
+  min-height:26px;
+  padding:0;
+  margin:0;
+  box-sizing:border-box;
+  border-radius:8px;
+
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  line-height:1;
+}
+
+/* Override global button margin/padding for the small controls */
+#clearColor,
+#iconBtn{
+  margin-top:0;
+  padding:0;
+  border:1px solid rgba(0,0,0,0.15);
+  background:#fff;
+}
+
+/* Make the color input behave like a normal square control */
+#color{
+  margin-top:0;
+  padding:0;
+  -webkit-appearance:none;
+  appearance:none;
+  border:1px solid rgba(0,0,0,0.15);
+  background:#fff;
+}
+#color::-webkit-color-swatch-wrapper{ padding:0; }
+#color::-webkit-color-swatch{
+  border:none;
+  border-radius:8px;
+}
+#color::-moz-color-swatch{
+  border:none;
+  border-radius:8px;
+}
+
+#closePanel { display:none; width:100%; }
+
+/* Export/Import/Wipe row tweaks */
+.actions-row button{
+  margin-top: 0;
+  font-size: 24px;
+  padding: 6px 8px;
+}
+.actions-row > *{ flex: 1; }
+
+/* Typography controls you added */
+#hexId {
+  color: #ffffff;
+  font-size: 40px;
+  font-weight: 300;
+}
+
+/* ---- Icon picker popover ---- */
+#iconPicker{
+  position:absolute;
+  display:none;
+  width: 152px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(0,0,0,0.2);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  z-index: 100;
+}
+#iconPicker.open{ display:block; }
+
+.iconGrid{
+  display:grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.iconCell{
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.15);
+  background: white;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  user-select:none;
+  font-size: 28px;
+  line-height: 1;
+}
+.iconCell:hover{ background: rgba(0,0,0,0.06); }
+
+/* bottom-sheet panel on smaller screens */
+@media (max-width: 900px){
+  #app { grid-template-columns: 1fr; }
+  #panel{
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 50vh;
+    transform: translateY(100%);
+    transition: transform 180ms ease;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.35);
+    z-index: 50;
+  }
+  body.panel-open #panel{ transform: translateY(0); }
+
+  #closePanel{
+    display:block;
+    width:100%;
+    color:#b00000;
+    border-color:#b00000;
+    font-weight:600;
+    font-size:28px;
+  }
+}
+</style>
+</head>
+<body>
+  <div id="app">
+    <div id="left">
+      <div id="wrap">
+        <svg id="grid"></svg>
+        <div id="status">Loading…</div>
+        <div class="hint" style="color:#aaa;">Click hexes to select, then paint and add notes.</div>
+      </div>
+    </div>
+
+    <div id="panel">
+      <div style="font-weight:200; font-size:30px; color:#ffffff; text-align:center;">The Journey</div>
+      <div style="font-weight:200; font-size:24px; color:#ffffff; text-align:center;">of</div>
+      <div style="font-weight:200; font-size:48px; color:#ffffff; text-align:center;">The Implication</div>
+
+      <div class="hint" id="hexId">Click a hex…</div>
+
+      <label>Color</label>
+      <div class="row palette-row">
+        <div class="palette" id="palette"></div>
+
+        <input id="color" type="color" title="Pick color" value="#2a2a2a" />
+        <button id="clearColor" type="button" title="Clear">✕</button>
+
+        <button id="iconBtn" type="button" title="Choose icon">✶</button>
+      </div>
+
+      <!-- Icon picker popover -->
+      <div id="iconPicker" aria-hidden="true">
+        <div class="iconGrid" id="iconGrid"></div>
+      </div>
+
+      <label>Notes</label>
+      <textarea id="notes" placeholder="What’s here? Encounters, landmarks, factions…"></textarea>
+
+      <div class="row actions-row">
+        <button id="exportBtn" type="button">Export</button>
+        <button id="importBtn" type="button">Import</button>
+        <button id="wipeBtn" type="button">Wipe</button>
+        <input id="importFile" type="file" accept="application/json" style="display:none;" />
+      </div>
+
+      <button id="closePanel" type="button">Abandon Ship!</button>
+      <div class="hint">Autosaves to this browser (localStorage).</div>
+    </div>
+
+<script>
+window.addEventListener("DOMContentLoaded", () => {
+  const COLS = 52;
+  const ROWS = 33;
+
+  // Flat-top hex geometry
+  const SIZE = 22;
+  const HEX_H = Math.sqrt(3) * SIZE;
+  const DX = 1.5 * SIZE;
+  const DY = HEX_H;
+
+  const PAD = 20;
+  const KEY = "hexmap_51x32_offset_v1";
+
+  // Zoom config
+  const ZOOM_FACTOR = 0.6;       // 0.5–0.7 moderate; 1 = no zoom
+  const ZOOM_IN_MS  = 360;
+  const ZOOM_OUT_MS = 420;
+
+  let baseViewBox = null;      // { x, y, w, h }
+  let zoomed = false;          // false = full, true = zoomed-in
+  let lastSelectedKey = null;  // toggle only when clicking same hex again
+  let animToken = 0;
+
+  // data["c,r"] = { c: "#RRGGBB" | null, n: "notes", icon: string }
+  const data = JSON.parse(localStorage.getItem(KEY) || "{}");
+
+  const svg = document.getElementById("grid");
+  const statusEl = document.getElementById("status");
+  const hexIdEl = document.getElementById("hexId");
+  const notesEl = document.getElementById("notes");
+  const colorEl = document.getElementById("color");
+  const paletteEl = document.getElementById("palette");
+
+  // Icon picker elements
+  const iconBtn = document.getElementById("iconBtn");
+  const iconPicker = document.getElementById("iconPicker");
+  const iconGrid = document.getElementById("iconGrid");
+
+  let selectedKey = null;
+  let selectedPoly = null;
+
+  function save(){ localStorage.setItem(KEY, JSON.stringify(data)); }
+  function key(c,r){ return `${c},${r}`; }
+
+  function ensure(c,r){
+    const k = key(c,r);
+    data[k] ??= { c: null, n: "", icon: "" };
+    if (data[k].icon === undefined) data[k].icon = "";
+    return data[k];
+  }
+
+  // ViewBox helpers
+  function setViewBox(x, y, w, h){
+    svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+  }
+  function getCurrentViewBox(){
+    const vb = svg.viewBox.baseVal;
+    return { x: vb.x, y: vb.y, w: vb.width, h: vb.height };
+  }
+  function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+  // Zoom target (clamped to base bounds)
+  function getZoomBoxForCenter(cx, cy){
+    if (!baseViewBox) return null;
+
+    const zw = baseViewBox.w * ZOOM_FACTOR;
+    const zh = baseViewBox.h * ZOOM_FACTOR;
+
+    const minX = baseViewBox.x;
+    const minY = baseViewBox.y;
+    const maxX = baseViewBox.x + baseViewBox.w - zw;
+    const maxY = baseViewBox.y + baseViewBox.h - zh;
+
+    const x = clamp(cx - zw/2, minX, maxX);
+    const y = clamp(cy - zh/2, minY, maxY);
+
+    return { x, y, w: zw, h: zh };
+  }
+
+  // Animation
+  function easeInOutCubic(t){
+    return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+  }
+  function animateViewBox(from, to, ms){
+    animToken++;
+    const myToken = animToken;
+    const start = performance.now();
+
+    function step(now){
+      if (myToken !== animToken) return; // cancelled by a new animation
+      const t = Math.min(1, (now - start) / ms);
+      const e = easeInOutCubic(t);
+
+      const x = from.x + (to.x - from.x) * e;
+      const y = from.y + (to.y - from.y) * e;
+      const w = from.w + (to.w - from.w) * e;
+      const h = from.h + (to.h - from.h) * e;
+
+      setViewBox(x, y, w, h);
+
+      if (t < 1) requestAnimationFrame(step);
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  // odd-q vertical layout, flat-top
+  function center(c, r){
+    const x = PAD + SIZE + c * DX;
+    const y = PAD + (HEX_H/2) + r * DY + ((c & 1) ? (DY/2) : 0);
+    return {x,y};
+  }
+
+  function points(cx,cy){
+    const pts=[];
+    for(let i=0;i<6;i++){
+      const a = (Math.PI/180) * (60*i);
+      pts.push([cx + SIZE*Math.cos(a), cy + SIZE*Math.sin(a)]);
+    }
+    return pts.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(" ");
+  }
+
+  function computeBounds(){
+    let maxX=0, maxY=0;
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+      const {x,y} = center(c,r);
+      maxX = Math.max(maxX, x + SIZE);
+      maxY = Math.max(maxY, y + (HEX_H/2));
+    }
+    return { w: Math.ceil(maxX + PAD), h: Math.ceil(maxY + PAD) };
+  }
+
+  function setVisual(poly, c, r){
+    const h = ensure(c,r);
+    poly.setAttribute("fill", h.c ? h.c : "rgba(255,255,255,0.03)");
+    poly.setAttribute("stroke", "rgba(255,255,255,0.55)");
+    poly.setAttribute("stroke-width", "1");
+    poly.style.cursor = "pointer";
+    poly.style.pointerEvents = "all";
+
+    if (poly._hexIcon) {
+      const icon = h.icon || "";
+      poly._hexIcon.textContent = icon;
+      poly._hexIcon.style.display = icon ? "block" : "none";
+    }
+  }
+
+  function setSelected(poly, on){
+    if (!poly) return;
+    if (on){
+      poly.setAttribute("stroke", "#ffd54a");
+      poly.setAttribute("stroke-width", "3");
+    } else {
+      poly.setAttribute("stroke", "rgba(255,255,255,0.55)");
+      poly.setAttribute("stroke-width", "1");
+    }
+  }
+
+  // ---- Icon picker behavior ----
+  const ICONS = [
+    "⚓︎", "✶", "☠︎",
+    "⚔︎", "🏰︎", "☘︎",
+    "❖", "✚", "⛵︎"
+  ];
+
+  function closeIconPicker(){
+    iconPicker.classList.remove("open");
+    iconPicker.setAttribute("aria-hidden", "true");
+  }
+
+  function openIconPicker(){
+    if (!selectedKey) return;
+
+    // Make it render so we can measure it
+    iconPicker.classList.add("open");
+    iconPicker.setAttribute("aria-hidden", "false");
+
+    const b = iconBtn.getBoundingClientRect();
+    const p = document.getElementById("panel").getBoundingClientRect();
+
+    const pickerWidth = iconPicker.getBoundingClientRect().width;
+
+    // Right-align picker to the button
+    iconPicker.style.left = (b.right - p.left - pickerWidth) + "px";
+    iconPicker.style.top  = (b.bottom - p.top + 8) + "px";
+  }
+
+  function applyIconToSelected(icon){
+    if (!selectedKey || !selectedPoly) return;
+    const [c,r] = selectedKey.split(",").map(Number);
+    const h = ensure(c,r);
+
+    h.icon = (icon === "∅") ? "" : icon;
+
+    setVisual(selectedPoly, c, r);
+    setSelected(selectedPoly, true);
+    save();
+  }
+
+  iconGrid.innerHTML = "";
+  ICONS.forEach(ic => {
+    const cell = document.createElement("div");
+    cell.className = "iconCell";
+    cell.textContent = ic;
+    cell.addEventListener("click", () => {
+      applyIconToSelected(ic);
+      closeIconPicker();
+    });
+    iconGrid.appendChild(cell);
+  });
+
+  iconBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (iconPicker.classList.contains("open")) closeIconPicker();
+    else openIconPicker();
+  });
+
+  document.addEventListener("click", () => closeIconPicker());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeIconPicker();
+  });
+
+  function selectHex(c,r, poly){
+    // selection state first
+    selectedKey = key(c,r);
+
+    if (selectedPoly) setSelected(selectedPoly, false);
+    selectedPoly = poly;
+    setSelected(selectedPoly, true);
+
+    const h = ensure(c,r);
+    hexIdEl.textContent = `Hex Selected: ${selectedKey}`;
+    notesEl.value = h.n || "";
+    colorEl.value = h.c || "#2a2a2a";
+
+    closeIconPicker();
+    document.body.classList.add("panel-open");
+
+    // zoom toggle + animated camera move
+    const { x, y } = center(c, r);
+
+    if (lastSelectedKey === selectedKey) {
+      zoomed = !zoomed;
+    } else {
+      lastSelectedKey = selectedKey;
+      // keep current zoom state; if already zoomed, we’ll pan to the new hex
+    }
+
+    if (!baseViewBox) return;
+
+    const from = getCurrentViewBox();
+    let to, ms;
+
+    if (zoomed) {
+      to = getZoomBoxForCenter(x, y) || baseViewBox;
+      ms = ZOOM_IN_MS;
+    } else {
+      to = { x: baseViewBox.x, y: baseViewBox.y, w: baseViewBox.w, h: baseViewBox.h };
+      ms = ZOOM_OUT_MS;
+    }
+
+    animateViewBox(from, to, ms);
+  }
+
+  function applyColorToSelected(color){
+    if (!selectedKey || !selectedPoly) return;
+    const [c,r] = selectedKey.split(",").map(Number);
+    const h = ensure(c,r);
+    h.c = color;
+    setVisual(selectedPoly, c, r);
+    setSelected(selectedPoly, true);
+    save();
+  }
+
+  function buildGrid(){
+    const {w,h} = computeBounds();
+    svg.setAttribute("width", w);
+    svg.setAttribute("height", h);
+    setViewBox(0, 0, w, h);
+
+    // establish the "full map" viewBox baseline
+    baseViewBox = { x: 0, y: 0, w, h };
+    zoomed = false;
+    lastSelectedKey = null;
+
+    svg.innerHTML = "";
+
+    let count = 0;
+    for (let r=0;r<ROWS;r++){
+      for (let c=0;c<COLS;c++){
+        const {x,y} = center(c,r);
+
+        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        poly.setAttribute("points", points(x,y));
+
+        // Single icon overlay (black, text-presentation where possible)
+        const hexIcon = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        hexIcon.textContent = "";
+        hexIcon.setAttribute("x", x);
+        hexIcon.setAttribute("y", y);
+        hexIcon.setAttribute("text-anchor", "middle");
+        hexIcon.setAttribute("dominant-baseline", "central");
+        hexIcon.setAttribute("font-size", "32");
+        hexIcon.setAttribute("fill", "#000");
+        hexIcon.style.pointerEvents = "none";
+        hexIcon.style.userSelect = "none";
+        hexIcon.style.display = "none";
+
+        poly._hexIcon = hexIcon;
+
+        setVisual(poly, c, r);
+
+        poly.addEventListener("mouseenter", () => {
+          if (poly !== selectedPoly && !ensure(c,r).c) poly.setAttribute("fill", "rgba(255,255,255,0.08)");
+        });
+        poly.addEventListener("mouseleave", () => {
+          if (poly !== selectedPoly) setVisual(poly, c, r);
+        });
+        poly.addEventListener("click", () => selectHex(c,r,poly));
+
+        svg.appendChild(poly);
+        svg.appendChild(hexIcon);
+        count++;
+      }
+    }
+    statusEl.textContent = `Hexes created: ${count} (expected ${COLS*ROWS})`;
+  }
+
+  // Panel bindings
+  notesEl.addEventListener("input", () => {
+    if (!selectedKey) return;
+    data[selectedKey] ??= { c:null, n:"", icon:"" };
+    if (data[selectedKey].icon === undefined) data[selectedKey].icon = "";
+    data[selectedKey].n = notesEl.value;
+    save();
+  });
+
+  colorEl.addEventListener("input", () => applyColorToSelected(colorEl.value));
+  document.getElementById("clearColor").addEventListener("click", () => applyColorToSelected(null));
+
+  document.getElementById("closePanel").addEventListener("click", () => {
+    document.body.classList.remove("panel-open");
+    closeIconPicker();
+  });
+
+  const palette = ["#3c6270","#bbbf6e","#7c7b79","#85cf7e","#5fa458","#ffffff"];
+  palette.forEach(c => {
+    const d = document.createElement("div");
+    d.className = "swatch";
+    d.style.background = c;
+    d.title = c;
+    d.addEventListener("click", () => { colorEl.value = c; applyColorToSelected(c); });
+    paletteEl.appendChild(d);
+  });
+
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify({ cols:COLS, rows:ROWS, data }, null, 2)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "hexmap_51x32.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  const importFile = document.getElementById("importFile");
+  document.getElementById("importBtn").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const obj = JSON.parse(text);
+    if (!obj?.data) return alert("Invalid file.");
+    Object.keys(data).forEach(k => delete data[k]);
+    Object.assign(data, obj.data);
+    save();
+    buildGrid();
+
+    if (baseViewBox) setViewBox(baseViewBox.x, baseViewBox.y, baseViewBox.w, baseViewBox.h);
+    zoomed = false;
+    lastSelectedKey = null;
+    closeIconPicker();
+
+    alert("Imported.");
+  });
+
+  document.getElementById("wipeBtn").addEventListener("click", () => {
+    if (!confirm("Wipe local save?")) return;
+    Object.keys(data).forEach(k => delete data[k]);
+    save();
+    buildGrid();
+
+    if (baseViewBox) setViewBox(baseViewBox.x, baseViewBox.y, baseViewBox.w, baseViewBox.h);
+    zoomed = false;
+    lastSelectedKey = null;
+    closeIconPicker();
+
+    selectedKey = null;
+    if (selectedPoly) setSelected(selectedPoly, false);
+    selectedPoly = null;
+    hexIdEl.textContent = "Click a hex…";
+    notesEl.value = "";
+    document.body.classList.remove("panel-open");
+  });
+
+  buildGrid();
+});
+</script>
+
+  </div>
+</body>
+</html>
