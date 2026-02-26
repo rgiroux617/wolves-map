@@ -244,9 +244,9 @@ button { box-sizing: border-box; }
       <textarea id="notes" placeholder="What’s here? Encounters, landmarks, factions…"></textarea>
 
       <div class="row actions-row">
-        <button id="exportBtn" type="button">Export</button>
-        <button id="importBtn" type="button">Import</button>
-        <button id="wipeBtn" type="button">Wipe</button>
+        <button id="exportBtn" type="button">Export Campaign</button>
+        <button id="importBtn" type="button">Import Campaign</button>
+        <button id="wipeBtn" type="button">Wipe Campaign</button>
         <input id="importFile" type="file" accept="application/json" style="display:none;" />
       </div>
 
@@ -256,6 +256,7 @@ button { box-sizing: border-box; }
 
 <script type="module">
 import { makeHexMath, buildHexSvgGrid } from "./hexSvgGrid.js";
+import { exportCampaign, importCampaignFromFile, wipeCampaign } from "./campaignStore.js";
 window.addEventListener("DOMContentLoaded", () => {
   
   // the basic math for the hexagon
@@ -631,41 +632,60 @@ window.addEventListener("DOMContentLoaded", () => {
     paletteEl.appendChild(d);
   });
 
-  // export, import, wipe buttons
+  // Campaign export/import/wipe (hex + all per-hex dungeons)
   document.getElementById("exportBtn").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ cols:COLS, rows:ROWS, data }, null, 2)], {type:"application/json"});
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "hexmap_51x32.json";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    exportCampaign({
+      hexStorageKey: KEY,
+      filenameBase: "mapbuddy_campaign"
+    });
   });
 
   const importFile = document.getElementById("importFile");
   document.getElementById("importBtn").addEventListener("click", () => importFile.click());
+
   importFile.addEventListener("change", async () => {
     const file = importFile.files?.[0];
     if (!file) return;
-    const text = await file.text();
-    const obj = JSON.parse(text);
-    if (!obj?.data) return alert("Invalid file.");
-    Object.keys(data).forEach(k => delete data[k]);
-    Object.assign(data, obj.data);
-    save();
-    buildGrid();
 
-    if (baseViewBox) setViewBox(baseViewBox.x, baseViewBox.y, baseViewBox.w, baseViewBox.h);
-    zoomed = false;
-    lastSelectedKey = null;
-    closeIconPicker();
+    try {
+      await importCampaignFromFile({ file, hexStorageKey: KEY });
 
-    alert("Imported.");
+      // reload hex data from localStorage into our live `data` object
+      const fresh = JSON.parse(localStorage.getItem(KEY) || "{}");
+      Object.keys(data).forEach(k => delete data[k]);
+      Object.assign(data, fresh);
+
+      buildGrid();
+
+      if (baseViewBox) setViewBox(baseViewBox.x, baseViewBox.y, baseViewBox.w, baseViewBox.h);
+      zoomed = false;
+      lastSelectedKey = null;
+      closeIconPicker();
+
+      // clear selection UI
+      selectedKey = null;
+      if (selectedPoly) setSelected(selectedPoly, false);
+      selectedPoly = null;
+      hexIdEl.textContent = "Click a hex…";
+      notesEl.value = "";
+
+      alert("Campaign imported.");
+    } catch (err) {
+      alert(err?.message || "Import failed.");
+    } finally {
+      importFile.value = ""; // allow re-importing same file
+    }
   });
 
   document.getElementById("wipeBtn").addEventListener("click", () => {
-    if (!confirm("Wipe local save?")) return;
+    const res = wipeCampaign({
+      hexStorageKey: KEY,
+      confirmFn: confirm
+    });
+    if (!res.wiped) return;
+
+    // clear live state + UI
     Object.keys(data).forEach(k => delete data[k]);
-    save();
     buildGrid();
 
     if (baseViewBox) setViewBox(baseViewBox.x, baseViewBox.y, baseViewBox.w, baseViewBox.h);
@@ -678,7 +698,8 @@ window.addEventListener("DOMContentLoaded", () => {
     selectedPoly = null;
     hexIdEl.textContent = "Click a hex…";
     notesEl.value = "";
-    document.body.classList.remove("panel-open");
+
+    alert(`Campaign wiped. Removed ${res.wipedDungeons} linked dungeon saves.`);
   });
 
   buildGrid();
