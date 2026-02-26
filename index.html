@@ -1,3 +1,4 @@
+<!-- Map Buddy version 02-23-02-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -44,8 +45,8 @@ label, .hint, button, input, textarea { font-family: "Cormorant", serif; }
   position: relative; /* anchor icon popover */
 }
 
-label { display:block; font-size:36px; margin-top:10px; color:#333; }
-input, textarea { width:100%; box-sizing:border-box; padding:8px; border:1px solid #ccc; border-radius:10px; background:white; font-size: 18px; }
+label { display:block; font-size:12px; margin-top:10px; color:#333; }
+input, textarea { width:100%; box-sizing:border-box; padding:8px; border:1px solid #ccc; border-radius:10px; background:white; font-size: 20px; }
 textarea { height:210px; resize:vertical; }
 
 .row { display:flex; gap:10px; margin-top:10px; }
@@ -54,15 +55,12 @@ textarea { height:210px; resize:vertical; }
 button { margin-top:10px; padding:8px 10px; border:1px solid #bbb; border-radius:10px; background:white; cursor:pointer; }
 button:hover { background:#eee; }
 
-.hint { font-size:18px; color:#666; margin-top:6px; }
+.hint { font-size:12px; color:#666; margin-top:6px; }
 .palette { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-.swatch { width:26px; height:26px; border-radius:8px; border:1px solid rgba(0,0,0,0.15); cursor:pointer; }
 
-button {
-  box-sizing: border-box;
-}
+button { box-sizing: border-box; }
 
-/* ---- Palette row: force all controls to be identical size ---- */
+/* ---- Palette row: force all controls to be identical size and aligned ---- */
 .palette-row{
   display:flex;
   align-items:center;
@@ -74,7 +72,7 @@ button {
   display:flex;
   gap:8px;
   flex-wrap:wrap;
-  margin-top:0px; /* keep existing spacing */
+  margin-top:0; /* IMPORTANT: keeps swatches aligned with the controls */
 }
 
 /* Swatches */
@@ -108,7 +106,7 @@ button {
   line-height:1;
 }
 
-/* Override global button margin/padding for the small controls */
+/* Override global button spacing for the small controls */
 #clearColor,
 #iconBtn{
   margin-top:0;
@@ -141,12 +139,11 @@ button {
 /* Export/Import/Wipe row tweaks */
 .actions-row button{
   margin-top: 0;
-  font-size: 24px;
+  font-size: 20px;
   padding: 6px 8px;
 }
 .actions-row > *{ flex: 1; }
 
-/* Typography controls you added */
 #hexId {
   color: #ffffff;
   font-size: 40px;
@@ -188,7 +185,6 @@ button {
 }
 .iconCell:hover{ background: rgba(0,0,0,0.06); }
 
-/* bottom-sheet panel on smaller screens */
 @media (max-width: 900px){
   #app { grid-template-columns: 1fr; }
   #panel{
@@ -210,7 +206,6 @@ button {
     color:#b00000;
     border-color:#b00000;
     font-weight:600;
-    font-size:28px;
   }
 }
 </style>
@@ -219,14 +214,13 @@ button {
   <div id="app">
     <div id="left">
       <div id="wrap">
+        <!-- the "container for the hex grid generated in JS (buildGrid)" -->
         <svg id="grid"></svg>
-        <div id="status">Loading…</div>
-        <div class="hint" style="color:#aaa;">Click hexes to select, then paint and add notes.</div>
       </div>
     </div>
 
     <div id="panel">
-      <div style="font-weight:200; font-size:30px; color:#ffffff; text-align:center;">The Journey</div>
+      <div style="font-weight:200; font-size:48px; color:#ffffff; text-align:center;">The Journey</div>
       <div style="font-weight:200; font-size:24px; color:#ffffff; text-align:center;">of</div>
       <div style="font-weight:200; font-size:48px; color:#ffffff; text-align:center;">The Implication</div>
 
@@ -242,7 +236,6 @@ button {
         <button id="iconBtn" type="button" title="Choose icon">✶</button>
       </div>
 
-      <!-- Icon picker popover -->
       <div id="iconPicker" aria-hidden="true">
         <div class="iconGrid" id="iconGrid"></div>
       </div>
@@ -257,16 +250,22 @@ button {
         <input id="importFile" type="file" accept="application/json" style="display:none;" />
       </div>
 
-      <button id="closePanel" type="button">Abandon Ship!</button>
+      <button id="closePanel" type="button">Close</button>
       <div class="hint">Autosaves to this browser (localStorage).</div>
     </div>
 
-<script>
+<script type="module">
+import { makeHexMath, buildHexSvgGrid } from "./hexSvgGrid.js";
 window.addEventListener("DOMContentLoaded", () => {
+  
+  // the basic math for the hexagon
+  // COLS, ROWS = how many hexes to make
+  // SIZE = radius of the hex(distance from center to a corner)
+  // HEX_H = sqrt(3) * SIZE = height of a flat - top hex
+  // DX = 1.5 * SIZE = horizontal distance between hex centers(flat - top spacing)
+  // DY = HEX_H = vertical distance between hex centers
   const COLS = 52;
   const ROWS = 33;
-
-  // Flat-top hex geometry
   const SIZE = 22;
   const HEX_H = Math.sqrt(3) * SIZE;
   const DX = 1.5 * SIZE;
@@ -275,17 +274,15 @@ window.addEventListener("DOMContentLoaded", () => {
   const PAD = 20;
   const KEY = "hexmap_51x32_offset_v1";
 
-  // Zoom config
-  const ZOOM_FACTOR = 0.6;       // 0.5–0.7 moderate; 1 = no zoom
+  const ZOOM_FACTOR = 0.6;
   const ZOOM_IN_MS  = 360;
   const ZOOM_OUT_MS = 420;
 
-  let baseViewBox = null;      // { x, y, w, h }
-  let zoomed = false;          // false = full, true = zoomed-in
-  let lastSelectedKey = null;  // toggle only when clicking same hex again
+  let baseViewBox = null;
+  let zoomed = false;
+  let lastSelectedKey = null;
   let animToken = 0;
 
-  // data["c,r"] = { c: "#RRGGBB" | null, n: "notes", icon: string }
   const data = JSON.parse(localStorage.getItem(KEY) || "{}");
 
   const svg = document.getElementById("grid");
@@ -295,7 +292,6 @@ window.addEventListener("DOMContentLoaded", () => {
   const colorEl = document.getElementById("color");
   const paletteEl = document.getElementById("palette");
 
-  // Icon picker elements
   const iconBtn = document.getElementById("iconBtn");
   const iconPicker = document.getElementById("iconPicker");
   const iconGrid = document.getElementById("iconGrid");
@@ -303,7 +299,13 @@ window.addEventListener("DOMContentLoaded", () => {
   let selectedKey = null;
   let selectedPoly = null;
 
+// helper functions
+  // save() — writes the data object to localStorage
+  // key(c, r) — turns a column / row into a stable string like "12,8"
+  // ensure(c, r) — guarantees data["c,r"] exists and has expected fields(c, n, icon)
+
   function save(){ localStorage.setItem(KEY, JSON.stringify(data)); }
+  
   function key(c,r){ return `${c},${r}`; }
 
   function ensure(c,r){
@@ -312,8 +314,9 @@ window.addEventListener("DOMContentLoaded", () => {
     if (data[k].icon === undefined) data[k].icon = "";
     return data[k];
   }
+// ********************************************************************
+// the camera system for panning and zooming upon double click of a hex
 
-  // ViewBox helpers
   function setViewBox(x, y, w, h){
     svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
   }
@@ -323,7 +326,6 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
 
-  // Zoom target (clamped to base bounds)
   function getZoomBoxForCenter(cx, cy){
     if (!baseViewBox) return null;
 
@@ -341,7 +343,6 @@ window.addEventListener("DOMContentLoaded", () => {
     return { x, y, w: zw, h: zh };
   }
 
-  // Animation
   function easeInOutCubic(t){
     return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
   }
@@ -351,7 +352,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const start = performance.now();
 
     function step(now){
-      if (myToken !== animToken) return; // cancelled by a new animation
+      if (myToken !== animToken) return;
       const t = Math.min(1, (now - start) / ms);
       const e = easeInOutCubic(t);
 
@@ -364,39 +365,31 @@ window.addEventListener("DOMContentLoaded", () => {
 
       if (t < 1) requestAnimationFrame(step);
     }
-
     requestAnimationFrame(step);
   }
 
-  // odd-q vertical layout, flat-top
-  function center(c, r){
-    const x = PAD + SIZE + c * DX;
-    const y = PAD + (HEX_H/2) + r * DY + ((c & 1) ? (DY/2) : 0);
-    return {x,y};
-  }
+// ************************************************************************
 
-  function points(cx,cy){
-    const pts=[];
-    for(let i=0;i<6;i++){
-      const a = (Math.PI/180) * (60*i);
-      pts.push([cx + SIZE*Math.cos(a), cy + SIZE*Math.sin(a)]);
-    }
-    return pts.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(" ");
-  }
+// Use *hexSvgGrid module* to calculate hex center, points and svg bounds
+  const hexMath = makeHexMath({ COLS, ROWS, SIZE, PAD });
+  const { center, points, computeBounds } = hexMath;
+// **************************************************************************
 
-  function computeBounds(){
-    let maxX=0, maxY=0;
-    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-      const {x,y} = center(c,r);
-      maxX = Math.max(maxX, x + SIZE);
-      maxY = Math.max(maxY, y + (HEX_H/2));
-    }
-    return { w: Math.ceil(maxX + PAD), h: Math.ceil(maxY + PAD) };
-  }
 
+// these paint the stored color and add a gold frame if the hex is selected (and remove if not)
   function setVisual(poly, c, r){
     const h = ensure(c,r);
-    poly.setAttribute("fill", h.c ? h.c : "rgba(255,255,255,0.03)");
+
+    poly.style.transition = "fill-opacity 1000ms ease";
+
+    if (h.c){
+      poly.setAttribute("fill", h.c);
+      poly.setAttribute("fill-opacity", "0.95");
+    } else {
+      poly.setAttribute("fill", "#ffffff");
+      poly.setAttribute("fill-opacity", "0.03");
+    }
+
     poly.setAttribute("stroke", "rgba(255,255,255,0.55)");
     poly.setAttribute("stroke-width", "1");
     poly.style.cursor = "pointer";
@@ -419,12 +412,14 @@ window.addEventListener("DOMContentLoaded", () => {
       poly.setAttribute("stroke-width", "1");
     }
   }
+// ************************************************************************
 
-  // ---- Icon picker behavior ----
+// popover icon table for adding to hexes
+// adds "open" class to CSS to display
   const ICONS = [
     "⚓︎", "✶", "☠︎",
     "⚔︎", "🏰︎", "☘︎",
-    "❖", "✚", "⛵︎"
+    "❖", "✚", "∅"
   ];
 
   function closeIconPicker(){
@@ -435,20 +430,35 @@ window.addEventListener("DOMContentLoaded", () => {
   function openIconPicker(){
     if (!selectedKey) return;
 
-    // Make it render so we can measure it
     iconPicker.classList.add("open");
     iconPicker.setAttribute("aria-hidden", "false");
 
+    // finding relative location for placing icon table on screen
     const b = iconBtn.getBoundingClientRect();
     const p = document.getElementById("panel").getBoundingClientRect();
 
     const pickerWidth = iconPicker.getBoundingClientRect().width;
 
-    // Right-align picker to the button
+    // The distance from the panel’s left edge needed to align the popover’s right edge with the button’s right edge.
     iconPicker.style.left = (b.right - p.left - pickerWidth) + "px";
     iconPicker.style.top  = (b.bottom - p.top + 8) + "px";
   }
 
+  // Clears BOTH color + icon (as requested earlier)
+  function clearSelectedHex(){
+    if (!selectedKey || !selectedPoly) return;
+    const [c,r] = selectedKey.split(",").map(Number);
+    const h = ensure(c,r);
+
+    h.c = null;
+    h.icon = "";
+
+    setVisual(selectedPoly, c, r);
+    setSelected(selectedPoly, true);
+    save();
+  }
+
+  // place the selected icon with the hex
   function applyIconToSelected(icon){
     if (!selectedKey || !selectedPoly) return;
     const [c,r] = selectedKey.split(",").map(Number);
@@ -456,9 +466,15 @@ window.addEventListener("DOMContentLoaded", () => {
 
     h.icon = (icon === "∅") ? "" : icon;
 
-    setVisual(selectedPoly, c, r);
-    setSelected(selectedPoly, true);
+    // Update SVG text directly for reliability
+    const t = selectedPoly._hexIcon;
+    if (t){
+      t.textContent = h.icon;
+      t.style.display = h.icon ? "block" : "none";
+    }
+
     save();
+    setSelected(selectedPoly, true);
   }
 
   iconGrid.innerHTML = "";
@@ -485,7 +501,6 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   function selectHex(c,r, poly){
-    // selection state first
     selectedKey = key(c,r);
 
     if (selectedPoly) setSelected(selectedPoly, false);
@@ -500,14 +515,12 @@ window.addEventListener("DOMContentLoaded", () => {
     closeIconPicker();
     document.body.classList.add("panel-open");
 
-    // zoom toggle + animated camera move
     const { x, y } = center(c, r);
 
     if (lastSelectedKey === selectedKey) {
       zoomed = !zoomed;
     } else {
       lastSelectedKey = selectedKey;
-      // keep current zoom state; if already zoomed, we’ll pan to the new hex
     }
 
     if (!baseViewBox) return;
@@ -526,68 +539,65 @@ window.addEventListener("DOMContentLoaded", () => {
     animateViewBox(from, to, ms);
   }
 
+  // ✅ KEEP ONLY ONE applyColorToSelected (animated)
   function applyColorToSelected(color){
     if (!selectedKey || !selectedPoly) return;
     const [c,r] = selectedKey.split(",").map(Number);
     const h = ensure(c,r);
+
     h.c = color;
-    setVisual(selectedPoly, c, r);
+
+    if (color){
+      selectedPoly.setAttribute("fill", color);
+      selectedPoly.setAttribute("fill-opacity", "0.0");
+
+      requestAnimationFrame(() => {
+        selectedPoly.setAttribute("fill-opacity", "0.95");
+      });
+    } else {
+      selectedPoly.setAttribute("fill", "#ffffff");
+      selectedPoly.setAttribute("fill-opacity", "0.03");
+    }
+
     setSelected(selectedPoly, true);
     save();
   }
+  
+  // This calls hexSvgGrid to help create the hex grid as individual objects
+  function buildGrid() {
+    // buildHexSvgGrid will size the svg, clear it, and rebuild polygons + icon <text>
+    const { w, h, count } = buildHexSvgGrid({
+      svg,
+      COLS,
+      ROWS,
+      center,
+      points,
+      computeBounds,
 
-  function buildGrid(){
-    const {w,h} = computeBounds();
-    svg.setAttribute("width", w);
-    svg.setAttribute("height", h);
+      // reuse your existing appearance rules (color, stroke, icon text)
+      setVisual,
+
+      // keep your existing click behavior
+      onClickHex: (c, r, poly) => selectHex(c, r, poly),
+
+      // replicate your existing hover behavior
+      onEnterHex: (c, r, poly) => {
+        if (poly !== selectedPoly && !ensure(c, r).c) poly.setAttribute("fill-opacity", "0.08");
+      },
+      onLeaveHex: (c, r, poly) => {
+        if (poly !== selectedPoly) setVisual(poly, c, r);
+      },
+
+      makeIconText: true
+    });
+
+    // keep your zoom bookkeeping exactly as before
     setViewBox(0, 0, w, h);
-
-    // establish the "full map" viewBox baseline
     baseViewBox = { x: 0, y: 0, w, h };
     zoomed = false;
     lastSelectedKey = null;
 
-    svg.innerHTML = "";
-
-    let count = 0;
-    for (let r=0;r<ROWS;r++){
-      for (let c=0;c<COLS;c++){
-        const {x,y} = center(c,r);
-
-        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-        poly.setAttribute("points", points(x,y));
-
-        // Single icon overlay (black, text-presentation where possible)
-        const hexIcon = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        hexIcon.textContent = "";
-        hexIcon.setAttribute("x", x);
-        hexIcon.setAttribute("y", y);
-        hexIcon.setAttribute("text-anchor", "middle");
-        hexIcon.setAttribute("dominant-baseline", "central");
-        hexIcon.setAttribute("font-size", "32");
-        hexIcon.setAttribute("fill", "#000");
-        hexIcon.style.pointerEvents = "none";
-        hexIcon.style.userSelect = "none";
-        hexIcon.style.display = "none";
-
-        poly._hexIcon = hexIcon;
-
-        setVisual(poly, c, r);
-
-        poly.addEventListener("mouseenter", () => {
-          if (poly !== selectedPoly && !ensure(c,r).c) poly.setAttribute("fill", "rgba(255,255,255,0.08)");
-        });
-        poly.addEventListener("mouseleave", () => {
-          if (poly !== selectedPoly) setVisual(poly, c, r);
-        });
-        poly.addEventListener("click", () => selectHex(c,r,poly));
-
-        svg.appendChild(poly);
-        svg.appendChild(hexIcon);
-        count++;
-      }
-    }
-    statusEl.textContent = `Hexes created: ${count} (expected ${COLS*ROWS})`;
+    statusEl.textContent = `Hexes created: ${count} (expected ${COLS * ROWS})`;
   }
 
   // Panel bindings
@@ -600,13 +610,17 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   colorEl.addEventListener("input", () => applyColorToSelected(colorEl.value));
-  document.getElementById("clearColor").addEventListener("click", () => applyColorToSelected(null));
+
+  document.getElementById("clearColor").addEventListener("click", () => {
+    clearSelectedHex();
+  });
 
   document.getElementById("closePanel").addEventListener("click", () => {
     document.body.classList.remove("panel-open");
     closeIconPicker();
   });
 
+  // palette creation
   const palette = ["#3c6270","#bbbf6e","#7c7b79","#85cf7e","#5fa458","#ffffff"];
   palette.forEach(c => {
     const d = document.createElement("div");
@@ -617,6 +631,7 @@ window.addEventListener("DOMContentLoaded", () => {
     paletteEl.appendChild(d);
   });
 
+  // export, import, wipe buttons
   document.getElementById("exportBtn").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify({ cols:COLS, rows:ROWS, data }, null, 2)], {type:"application/json"});
     const a = document.createElement("a");
