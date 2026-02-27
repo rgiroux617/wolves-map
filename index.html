@@ -1,12 +1,14 @@
-<!-- Map Buddy version 02-23-03-->
+<!-- Map Buddy version 02-26-02-->
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="iphoneIcon.png">
 <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Cormorant:wght@400;500;600&display=swap" rel="stylesheet">
 
-<title>Hex Map (51x32 flat-top, offset)</title>
+<title>MAP BUDDY ©2026 Bugman Industries LLC</title>
 <style>
 body { margin:0; height:100vh; font-family: "Cormorant", serif; }
 
@@ -257,9 +259,18 @@ button { box-sizing: border-box; }
 
 <script type="module">
 import { makeHexMath, buildHexSvgGrid } from "./hexSvgGrid.js";
-import { exportCampaign, importCampaignFromFile, wipeCampaign } from "./campaignStore.js";
+import { exportCampaign, importCampaignFromFile, wipeCampaign, importCampaignFromUrl } from "./campaignStore.js";
+
+
+function isAuthorMode() {
+  const p = new URLSearchParams(location.search);
+  if (p.get("author") === "1") return true;
+  // optional: persistent author mode
+  return localStorage.getItem("mapbuddy_author") === "1";
+}
+
 window.addEventListener("DOMContentLoaded", () => {
-  
+  (async () => {
   // the basic math for the hexagon
   // COLS, ROWS = how many hexes to make
   // SIZE = radius of the hex(distance from center to a corner)
@@ -276,6 +287,13 @@ window.addEventListener("DOMContentLoaded", () => {
   const PAD = 20;
   const KEY = "hexmap_51x32_offset_v1";
 
+  const SEED_URL = "./seeds/campaign_default.json";
+
+  function isAuthorMode() {
+    const p = new URLSearchParams(location.search);
+    return p.get("author") === "1";
+  }
+
   const ZOOM_FACTOR = 0.6;
   const ZOOM_IN_MS  = 360;
   const ZOOM_OUT_MS = 420;
@@ -285,7 +303,19 @@ window.addEventListener("DOMContentLoaded", () => {
   let lastSelectedKey = null;
   let animToken = 0;
 
-  const data = JSON.parse(localStorage.getItem(KEY) || "{}");
+  let data = {};
+
+  // Readers: always overwrite local state from the published seed
+  if (!isAuthorMode()) {
+    await importCampaignFromUrl({
+      url: SEED_URL,
+      hexStorageKey: KEY,
+      cacheBust: `v=${Date.now()}` // prevents iPad/Safari stale caching
+    });
+  }
+
+  // Now load the (possibly seeded) state into memory
+  data = JSON.parse(localStorage.getItem(KEY) || "{}");
 
   const svg = document.getElementById("grid");
   const statusEl = document.getElementById("status");
@@ -747,6 +777,7 @@ window.addEventListener("DOMContentLoaded", () => {
     alert(`Campaign wiped. Removed ${res.wipedDungeons} linked dungeon saves.`);
   });
 
+  data = JSON.parse(localStorage.getItem(KEY) || "{}");
   buildGrid();
 
   if (returnHex && data.hasOwnProperty(returnHex)) {
@@ -754,6 +785,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const poly = grid.byCR.get(returnHex)?.poly;
     if (poly) selectHex(c, r, poly);
   }
+  })();
 });
 </script>
 

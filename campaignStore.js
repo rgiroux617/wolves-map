@@ -86,6 +86,42 @@ export async function importCampaignFromFile({ file, hexStorageKey }) {
   };
 }
 
+export async function importCampaignFromUrl({ url, hexStorageKey, cacheBust = "" }) {
+  if (!url) throw new Error("importCampaignFromUrl: url required.");
+  if (!hexStorageKey) throw new Error("importCampaignFromUrl: hexStorageKey required.");
+
+  const finalUrl = cacheBust ? `${url}${url.includes("?") ? "&" : "?"}${cacheBust}` : url;
+
+  const res = await fetch(finalUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Seed fetch failed (${res.status}).`);
+
+  const text = await res.text();
+  const obj = safeParse(text, null);
+
+  if (!obj || obj.schema !== CAMPAIGN_SCHEMA) {
+    throw new Error("Invalid campaign seed (schema mismatch).");
+  }
+  if (!obj.hex || typeof obj.hex.data !== "object") {
+    throw new Error("Invalid campaign seed (missing hex.data).");
+  }
+  if (!obj.dungeonsByHexKey || typeof obj.dungeonsByHexKey !== "object") {
+    throw new Error("Invalid campaign seed (missing dungeonsByHexKey).");
+  }
+
+  // Replace hex map state
+  localStorage.setItem(hexStorageKey, JSON.stringify(obj.hex.data));
+
+  // Replace all dungeon saves that are present in the bundle
+  for (const [hexKey, dungeonState] of Object.entries(obj.dungeonsByHexKey)) {
+    localStorage.setItem(dungeonKeyForHex(hexKey), JSON.stringify(dungeonState));
+  }
+
+  return {
+    importedHex: true,
+    importedDungeons: Object.keys(obj.dungeonsByHexKey).length
+  };
+}
+
 export function wipeCampaign({ hexStorageKey, confirmFn = null }) {
   if (!hexStorageKey) throw new Error("wipeCampaign: hexStorageKey required.");
 
