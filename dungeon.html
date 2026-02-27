@@ -1,0 +1,156 @@
+<!-- dungeontracker version 2-25-02 -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1, user-scalable=no" />
+  <title>DungeonTracker Demo (50x50)</title>
+  <link rel="stylesheet" href="./dungeontracker.css?v=2026-02-25-06" />
+</head>
+<body>
+  <div id="app">
+    <div id="left">
+      <div id="wrap">
+        <div id="mapViewport">
+          <svg id="dungeonGrid"></svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel">
+      <h1 id="dtTitle">Dungeon Buddy</h1>
+      <!-- <div class="small">
+        Click a tile to edit it.<br/>
+        Stage tiles with <kbd>Shift</kbd>+Click, then <kbd>Enter</kbd> or "Create Room".<br/>
+        Rooms must be edge-contiguous.
+      </div> -->
+
+      <div class="hr"></div>
+
+      <label>Dungeon name</label>
+      <div class="row2">
+        <input id="dtDungeonName" type="text" placeholder="Tomb of the Piss-Baby" />
+        <button id="dtAllNotesBtn" type="button" class="miniBtn">Notes</button>
+      </div>
+      
+      <label>Room name</label>
+      <input id="dtRoomName" type="text" placeholder="(auto)" />
+      
+      <label>Room kind</label>
+      <select id="dtRoomKind">
+        <option value="basic">Basic</option>
+        <option value="hall">Hall</option>
+        <option value="stairs">Stairs</option>
+        <option value="secret">Secret</option>
+        <option value="boss">Boss</option>
+      </select>
+
+      <div class="chip" id="dtMode">Editing: Cell</div>
+      <div class="chip" id="dtSelected">Click a tile…</div>
+
+      <label>Cell marks</label>
+      <div class="markRow" id="dtCellMarks">
+        <button type="button" class="markBtn" data-icon="E">E</button>
+        <button type="button" class="markBtn" data-icon="T">T</button>
+        <button type="button" class="markBtn" data-icon="C">C</button>
+        <button type="button" class="markBtn" data-icon="*">*</button>
+        <button type="button" class="markBtn" data-icon="?">?</button>
+        <input id="dtCellColor" class="markColor" type="color" value="#3c6270" title="Cell color" />
+      </div>
+
+      <label>Notes</label>
+      <textarea id="dtNotes" placeholder="What’s here? Doors, traps, factions…"></textarea>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <button id="dtCreateRoom" type="button">Create Room</button>
+        <button id="dtClearCell" type="button">Clear Cell</button>
+      </div>
+      <div class="row">
+        <button id="dtDissolveRoom" type="button">Dissolve Room</button>
+        <button id="dtDeleteRoom" type="button">Delete Room</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <button id="exitBtn" type="button">Exit the Dungeon</button>
+        <button id="dtWipe" type="button">Wipe</button>
+      </div>
+
+      <div class="hr"></div>
+      <div class="small">Rooms</div>
+      <div id="dtRoomList"></div>
+    </div>
+
+    <div id="dtAllNotesModal" class="modal" hidden>
+      <div class="modalCard">
+        <div class="modalHeader">
+          <div class="modalTitle">Room Notes</div>
+          <button id="dtAllNotesClose" type="button" class="miniBtn">Close</button>
+        </div>
+        <div id="dtAllNotesList" class="modalBody"></div>
+      </div>
+    </div>
+  </div>
+
+
+
+<script type="module">
+  import { createDungeonTracker } from "./dungeontracker.js?v=2026-02-26-07";
+
+  window.addEventListener("DOMContentLoaded", () => {
+    const svgEl = document.getElementById("dungeonGrid");
+
+    const params = new URLSearchParams(location.search);
+    const hexKey = params.get("hex"); // expected format like "12,7"
+
+    const panelEls = {
+      titleEl: document.getElementById("dtTitle"),
+      modeEl: document.getElementById("dtMode"),
+      selectedEl: document.getElementById("dtSelected"),
+      cellMarksEl: document.getElementById("dtCellMarks"),
+      cellColorEl: document.getElementById("dtCellColor"),
+      notesEl: document.getElementById("dtNotes"),
+      roomNameEl: document.getElementById("dtRoomName"),
+      roomKindEl: document.getElementById("dtRoomKind"),
+      createRoomBtn: document.getElementById("dtCreateRoom"),
+      dissolveRoomBtn: document.getElementById("dtDissolveRoom"),
+      deleteRoomBtn: document.getElementById("dtDeleteRoom"),
+      clearCellBtn: document.getElementById("dtClearCell"),
+      exportBtn: null,
+      importBtn: null,
+      importFileEl: null,
+      wipeBtn: document.getElementById("dtWipe"),
+      roomListEl: document.getElementById("dtRoomList"),
+      dungeonNameEl: document.getElementById("dtDungeonName"),
+      allNotesBtn: document.getElementById("dtAllNotesBtn"),
+      allNotesModalEl: document.getElementById("dtAllNotesModal"),
+      allNotesCloseBtn: document.getElementById("dtAllNotesClose"),
+      allNotesListEl: document.getElementById("dtAllNotesList"),
+      exitBtn: document.getElementById("exitBtn")
+    };
+
+    createDungeonTracker({
+      svgEl,
+      panelEls,
+      hexKey,
+      storageKey: "dungeontracker_demo_50x50",
+      COLS: 50,
+      ROWS: 50,
+      SIZE: 18,
+      GAP: 2,
+      PAD: 18,
+
+      onExit: () => {
+        window.location.href = hexKey
+          ? `index.html?hex=${encodeURIComponent(hexKey)}`
+          : "index.html";
+      }
+    });
+
+  });
+</script>
+</body>
+</html>

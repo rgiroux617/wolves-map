@@ -1,0 +1,1062 @@
+// dungeontracker.js v2026-02-26-01
+// A self-contained "DungeonTracker" you can mount into an existing page.
+// - Left side: SVG 50x50 square grid.
+// - Right side: panel to edit either a cell OR a room.
+// - Enhancement: select contiguous cells and convert into a "Room" (BFS adjacency).
+
+import { makeSquareMath, buildSquareSvgGrid } from "./dungeonGridSvg.js";
+import { dungeonKeyForHex } from "./campaignStore.js";
+
+export function createDungeonTracker(opts){
+  const {
+    svgEl,
+    panelEls,
+    hexKey = null,
+    storageKey = "dungeontracker_v1",
+    COLS = 50,
+    ROWS = 50,
+    SIZE = 18,
+    GAP  = 2,
+    PAD  = 18,
+    // optional: called when the user clicks "Exit"
+    onExit = null
+  } = opts;
+
+  const effectiveStorageKey = hexKey ? dungeonKeyForHex(hexKey) : storageKey;
+
+  const {
+    titleEl,
+    modeEl,
+    selectedEl,
+    cellMarksEl,
+    cellColorEl,
+    notesEl,
+    roomNameEl,
+    roomKindEl,
+    createRoomBtn,
+    dissolveRoomBtn,
+    deleteRoomBtn,
+    clearCellBtn,
+    exportBtn,
+    importBtn,
+    importFileEl,
+    wipeBtn,
+    roomListEl,
+
+    dungeonNameEl,
+    allNotesBtn,
+    allNotesModalEl,
+    allNotesCloseBtn,
+    allNotesListEl,
+
+    exitBtn
+  } = panelEls;
+
+  // --- data model ---
+  // data.cells["c,r"] = { c: "#hex", n: "notes", icon:"", roomId: "abc" | null }
+  // data.rooms[roomId] = { id, name, kind, c, n, icon, cells: ["c,r", ...] }
+  const data = load() || { cells:{}, rooms:{}, meta:{ nextRoomId: 1 } };
+
+  const ROOM_KIND_COLORS = {
+    basic: "#3c6270", // your current default blue
+    hall: "#c9c9c9",
+    stairs: "#ffd54a",
+    secret: "#7a4bc2",
+    boss: "#b02a2a"
+  };
+
+  function save() { localStorage.setItem(effectiveStorageKey, JSON.stringify(data)); }
+  function load() {
+    try { return JSON.parse(localStorage.getItem(effectiveStorageKey) || ""); }
+    catch { return null; }
+  }
+
+  function key(c, r){ return `${c},${r}`; }
+
+  function ensureCell(c, r){
+    const k = key(c, r);
+    data.cells[k] ??= { c: null, n: "", icon: "", iconOverride: null, roomId: null };
+    const cell = data.cells[k];
+    if (cell.icon === undefined) cell.icon = "";
+    if (cell.iconOverride === undefined) cell.iconOverride = null; // null = inherit room, "" = force blank
+    if (cell.roomId === undefined) cell.roomId = null;
+    return cell;
+  }
+
+  function openAllNotesModal() {
+    const rooms = Object.values(data.rooms).sort((a, b) => a.id.localeCompare(b.id));
+    allNotesListEl.innerHTML = rooms.length
+      ? rooms.map(r => `
+        <div class="noteItem">
+          <div class="name">${escapeHtml(r.name || r.id)}</div>
+          <div class="text">${escapeHtml(r.n || "(no notes)")}</div>
+        </div>
+      `).join("")
+      : `<div class="small">No rooms yet.</div>`;
+    allNotesModalEl.hidden = false;
+  }
+
+  function closeAllNotesModal() { allNotesModalEl.hidden = true; }
+
+  function wireTap(el, fn) {
+    if (!el) return;
+    el.addEventListener("click", fn);                 // desktop
+    el.addEventListener("pointerup", (e) => {         // iPad / touch
+      if (e.pointerType !== "mouse") fn(e);
+    });
+    el.addEventListener("touchend", fn, { passive: true }); // extra iOS safety
+  }
+
+  wireTap(allNotesBtn, openAllNotesModal);
+  wireTap(allNotesCloseBtn, closeAllNotesModal);
+
+  allNotesModalEl.addEventListener("click", (e) => {
+    if (e.target === allNotesModalEl) closeAllNotesModal();
+  });
+  allNotesModalEl.addEventListener("touchend", (e) => {
+    if (e.target === allNotesModalEl) closeAllNotesModal();
+  }, { passive: true });
+
+  function roomById(id){ return id ? data.rooms[id] : null; }
+
+  // --- selection state ---
+  // editTarget: "cell" | "room"
+  let editTarget = "cell";
+  let selectedCellKey = null;
+  let selectedRect = null;
+
+  // multi-select staging for "create room"
+  const staged = new Set(); // keys
+  let hoverKey = null;
+  // “Group mode” (iPad-friendly multi-select): when ON, tapping tiles stages them
+  let groupMode = false;
+
+  // --- geometry + build ---
+  const math = makeSquareMath({ COLS, ROWS, SIZE, GAP, PAD });
+  const { topLeft, center, computeBounds } = math;
+
+  function setSelected(rect, on){
+    if (!rect) return;
+    if (on){
+      rect.setAttribute("stroke", "#ffd54a");
+      rect.setAttribute("stroke-width", "3");
+    } else {
+      rect.setAttribute("stroke", "rgba(255,255,255,0.55)");
+      rect.setAttribute("stroke-width", "1");
+    }
+  }
+
+  function setStaged(rect, on){
+    if (!rect) return;
+    if (on){
+      rect.setAttribute("stroke", "#7fe6ff");
+      rect.setAttribute("stroke-width", "3");
+      rect.setAttribute("stroke-dasharray", "4 3");
+    } else {
+      rect.removeAttribute("stroke-dasharray");
+    }
+  }
+
+  // primary paint logic
+  function setVisual(rect, c, r){
+    const cell = ensureCell(c, r);
+
+    rect.style.cursor = "pointer";
+    rect.style.pointerEvents = "all";
+    rect.style.transition = "fill-opacity 200ms ease";
+
+    // base fill: room color if part of room, else cell color, else faint
+    const room = roomById(cell.roomId);
+    const color = (room?.c) || cell.c;
+
+    if (color){
+      rect.setAttribute("fill", color);
+      rect.setAttribute("fill-opacity", "0.90");
+    } else {
+      rect.setAttribute("fill", "#ffffff");
+      rect.setAttribute("fill-opacity", "0.05");
+    }
+
+    rect.setAttribute("stroke", "rgba(255,255,255,0.55)");
+    rect.setAttribute("stroke-width", "1");
+
+    // icon: prefer room icon if in room, else cell icon
+    const icon = (cell.iconOverride !== null)
+      ? cell.iconOverride          // "" allowed (forces blank)
+      : ((room?.icon) || "");      // inherit room icon only when override is null
+    if (rect._cellIcon){
+      rect._cellIcon.textContent = icon;
+      rect._cellIcon.style.display = icon ? "block" : "none";
+    }
+  }
+
+  const grid = buildSquareSvgGrid({
+    svg: svgEl,
+    COLS, ROWS, SIZE, GAP, PAD,
+    topLeft, center, computeBounds,
+    setVisual,
+    onClickCell: (c, r, rect) => onCellClick(c, r, rect),
+    onEnterCell: (c, r, rect) => onCellEnter(c, r, rect),
+    onLeaveCell: (c, r, rect) => onCellLeave(c, r, rect),
+    makeIconText: true
+  });
+
+  // --- pan + pinch-zoom via viewBox (safe with tile clicks) ---
+  const vbMinW = grid.w;
+  const vbMinH = grid.h;
+  const maxZoom = 8;
+  const vbMaxW = grid.w / maxZoom;
+  const vbMaxH = grid.h / maxZoom;
+
+  let view = { x: 0, y: 0, w: grid.w, h: grid.h };
+  svgEl.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+  function clampView() {
+    view.w = clamp(view.w, vbMaxW, vbMinW);
+    view.h = clamp(view.h, vbMaxH, vbMinH);
+    view.x = clamp(view.x, 0, grid.w - view.w);
+    view.y = clamp(view.y, 0, grid.h - view.h);
+  }
+
+  function updateView() {
+    clampView();
+    svgEl.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+  }
+
+  function svgUnitsPerPx() {
+    const r = svgEl.getBoundingClientRect();
+    return {
+      ux: view.w / Math.max(1, r.width),
+      uy: view.h / Math.max(1, r.height),
+    };
+  }
+
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+  // suppress tile clicks after a drag/pinch
+  let blockClicksUntil = 0;
+  function blockClicks(ms = 250) { blockClicksUntil = Date.now() + ms; }
+
+  function clientToSvg(clientX, clientY) {
+    const rect = svgEl.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    return {
+      x: view.x + px * (view.w / Math.max(1, rect.width)),
+      y: view.y + py * (view.h / Math.max(1, rect.height)),
+    };
+  }
+
+  /* =========================
+     Desktop: wheel zoom
+     ========================= */
+  svgEl.addEventListener("wheel", (e) => {
+    // zoom around mouse pointer
+    e.preventDefault();
+    blockClicks(150);
+
+    const zoomFactor = (e.deltaY > 0) ? 1.12 : 0.89; // scroll down => zoom out
+    const p = clientToSvg(e.clientX, e.clientY);
+
+    const newW = clamp(view.w * zoomFactor, vbMaxW, vbMinW);
+    const newH = clamp(view.h * zoomFactor, vbMaxH, vbMinH);
+
+    const rx = (p.x - view.x) / view.w;
+    const ry = (p.y - view.y) / view.h;
+
+    view.x = p.x - rx * newW;
+    view.y = p.y - ry * newH;
+    view.w = newW;
+    view.h = newH;
+
+    updateView();
+  }, { passive: false });
+
+  /* =========================
+     Desktop: right-drag pan
+     ========================= */
+  svgEl.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  let mousePan = null; // { startView, startPt }
+  svgEl.addEventListener("pointerdown", (e) => {
+    // IMPORTANT: do NOT steal left-click (tile selection)
+    if (e.pointerType === "mouse") {
+      if (e.button !== 2) return; // only right button pans
+      e.preventDefault();
+      blockClicks(200);
+      mousePan = { startView: { ...view }, startPt: { x: e.clientX, y: e.clientY } };
+      return;
+    }
+  }, { passive: false });
+
+  svgEl.addEventListener("pointermove", (e) => {
+    if (!mousePan) return;
+    e.preventDefault();
+    const dxPx = e.clientX - mousePan.startPt.x;
+    const dyPx = e.clientY - mousePan.startPt.y;
+    const { ux, uy } = svgUnitsPerPx();
+    view.x = mousePan.startView.x - dxPx * ux;
+    view.y = mousePan.startView.y - dyPx * uy;
+    updateView();
+  }, { passive: false });
+
+  svgEl.addEventListener("pointerup", () => { mousePan = null; }, { passive: false });
+  svgEl.addEventListener("pointercancel", () => { mousePan = null; }, { passive: false });
+
+  /* =========================
+     iPad: touch pan + pinch
+     (don’t preventDefault on touchstart so taps still click tiles)
+     ========================= */
+  let t0 = null;
+  // t0: { mode:"pan"|"pinch", startView, p1, startDist, startMidSvg }
+
+  function getTouches(e) {
+    return Array.from(e.touches).map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+  }
+
+  svgEl.addEventListener("touchstart", (e) => {
+    const ts = getTouches(e);
+    if (ts.length === 1) {
+      t0 = { mode: "pan", startView: { ...view }, p1: ts[0], moved: false };
+    } else if (ts.length === 2) {
+      const m = mid(ts[0], ts[1]);
+      const d = dist(ts[0], ts[1]);
+      t0 = { mode: "pinch", startView: { ...view }, startDist: d, startMidSvg: clientToSvg(m.x, m.y) };
+    }
+  }, { passive: true });
+
+  svgEl.addEventListener("touchmove", (e) => {
+    if (!t0) return;
+    const ts = getTouches(e);
+
+    // PINCH: always preventDefault
+    if (t0.mode === "pinch" && ts.length === 2) {
+      e.preventDefault();
+      blockClicks(450);
+
+      const m = mid(ts[0], ts[1]);
+      const d = dist(ts[0], ts[1]);
+
+      const scale = t0.startDist / Math.max(1, d);
+      view.w = clamp(t0.startView.w * scale, vbMaxW, vbMinW);
+      view.h = clamp(t0.startView.h * scale, vbMaxH, vbMinH);
+
+      const rect = svgEl.getBoundingClientRect();
+      const midPxX = m.x - rect.left;
+      const midPxY = m.y - rect.top;
+
+      view.x = t0.startMidSvg.x - (midPxX / Math.max(1, rect.width)) * view.w;
+      view.y = t0.startMidSvg.y - (midPxY / Math.max(1, rect.height)) * view.h;
+
+      updateView();
+      return;
+    }
+
+    // PAN: only preventDefault AFTER we exceed a move threshold
+    if (t0.mode === "pan" && ts.length === 1) {
+      const dxPx = ts[0].x - t0.p1.x;
+      const dyPx = ts[0].y - t0.p1.y;
+      const moved = Math.hypot(dxPx, dyPx);
+
+      // If it’s basically a tap, do nothing (lets iOS generate the click)
+      if (moved < 8) return;
+
+      e.preventDefault();
+      blockClicks(350);
+
+      const { ux, uy } = svgUnitsPerPx();
+      view.x = t0.startView.x - dxPx * ux;
+      view.y = t0.startView.y - dyPx * uy;
+      updateView();
+    }
+  }, { passive: false });
+
+  svgEl.addEventListener("touchend", (e) => {
+    const ts = getTouches(e);
+    if (ts.length === 0) t0 = null;
+    if (ts.length === 1) t0 = { mode: "pan", startView: { ...view }, p1: ts[0], moved: false };
+  }, { passive: true });
+
+  svgEl.addEventListener("touchcancel", () => { t0 = null; }, { passive: true });
+
+  function rectForKey(k){ return grid.rectByKey.get(k) || null; }
+
+  // --- input model ---
+  // Click:
+  //   - normal click => select cell (edit cell or its room)
+  //   - Shift+Click => stage/unstage for room creation
+  // Keyboard:
+  //   - Esc clears staging (and closes room edit back to cell)
+  //   - Enter creates room if staging is valid
+  function onCellClick(c, r, rect) {
+    if (Date.now() < blockClicksUntil) return;
+
+    const k = key(c, r);
+
+    // If grouping is ON, tap toggles staging (iPad-friendly)
+    if (groupMode) {
+      toggleStage(k);
+      return;
+    }
+
+    // Desktop shortcut still supported
+    if (window.event?.shiftKey) {
+      toggleStage(k);
+      return;
+    }
+
+    selectCell(k, rect);
+  }
+
+  function onCellEnter(c, r, rect){
+    hoverKey = key(c, r);
+    if (rect !== selectedRect && !staged.has(hoverKey)){
+      rect.setAttribute("fill-opacity", "0.10");
+    }
+  }
+
+  function onCellLeave(c, r, rect){
+    const k = key(c, r);
+    hoverKey = null;
+    if (rect !== selectedRect && !staged.has(k)) setVisual(rect, c, r);
+  }
+
+  function toggleStage(k){
+    const rect = rectForKey(k);
+    if (!rect) return;
+
+    if (staged.has(k)){
+      staged.delete(k);
+      // restore visual
+      const [c, r] = k.split(",").map(Number);
+      setVisual(rect, c, r);
+    } else {
+      staged.add(k);
+      setStaged(rect, true);
+    }
+    renderStageStatus();
+  }
+
+  function clearStage(){
+    for (const k of staged){
+      const rect = rectForKey(k);
+      if (!rect) continue;
+      const [c, r] = k.split(",").map(Number);
+      rect.removeAttribute("stroke-dasharray");
+      setVisual(rect, c, r);
+    }
+    staged.clear();
+    renderStageStatus();
+  }
+
+  function enterGroupMode() {
+    groupMode = true;
+    clearStage();          // start clean
+    renderStageStatus();   // updates button label/disabled
+  }
+
+  function exitGroupMode() {
+    groupMode = false;
+    clearStage();
+    renderStageStatus();
+  }
+
+  function selectCell(k, rect){
+    selectedCellKey = k;
+
+    if (selectedRect) {
+      const cPrev = Number(selectedRect.dataset.c);
+      const rPrev = Number(selectedRect.dataset.r);
+      setVisual(selectedRect, cPrev, rPrev);
+      setSelected(selectedRect, false);
+    }
+    
+    if (selectedRect) setSelected(selectedRect, false);
+    selectedRect = rect;
+
+    // Ensure any hover-fade is cleared when selecting
+    const [c0, r0] = k.split(",").map(Number);
+    setVisual(selectedRect, c0, r0);
+    setSelected(selectedRect, true);
+
+    // default edit target: if cell belongs to a room, open room edit; else cell edit
+    const [c, r] = k.split(",").map(Number);
+    const cell = ensureCell(c, r);
+    const room = roomById(cell.roomId);
+    editTarget = room ? "room" : "cell";
+
+    modeEl.textContent = (editTarget === "room") ? "Editing: Room" : "Editing: Cell";
+    selectedEl.textContent = (editTarget === "room")
+      ? `Room: ${room.name} (${room.cells.length} tiles)`
+      : `Cell: ${k}`;
+
+    // populate fields
+    if (editTarget === "cell"){
+      cellColorEl.value = cell.c || "#3c6270";
+      notesEl.value = cell.n || "";
+      roomNameEl.value = "";
+      roomKindEl.value = "basic";
+    } else {
+      notesEl.value = room.n || "";
+      roomNameEl.value = room.name || "";
+      roomKindEl.value = room.kind || "basic";
+    }
+
+    refreshButtons();
+    renderRoomList();
+    document.body.classList.add("panel-open");
+  }
+
+  // --- contiguity check (4-neighbor adjacency) ---
+  function isContiguous(keys){
+    if (keys.length <= 1) return true;
+    const set = new Set(keys);
+    const start = keys[0];
+
+    const q = [start];
+    const seen = new Set([start]);
+
+    while (q.length){
+      const cur = q.shift();
+      const [c, r] = cur.split(",").map(Number);
+      const neigh = [
+        key(c+1, r), key(c-1, r),
+        key(c, r+1), key(c, r-1),
+      ];
+      for (const n of neigh){
+        if (!set.has(n) || seen.has(n)) continue;
+        seen.add(n);
+        q.push(n);
+      }
+    }
+    return seen.size === set.size;
+  }
+
+  function anyInRoom(keys){
+    for (const k of keys){
+      const [c, r] = k.split(",").map(Number);
+      const cell = ensureCell(c, r);
+      if (cell.roomId) return cell.roomId;
+    }
+    return null;
+  }
+
+  function createRoomFromStage(){
+    const keys = Array.from(staged);
+    if (!keys.length) return;
+
+    // rule 1: staged set must be contiguous
+    if (!isContiguous(keys)){
+      alert("Room tiles must be contiguous (edge-adjacent). Tip: stage with Shift+Click.");
+      return;
+    }
+
+    // rule 2: don't allow mixing multiple rooms; but allow empty cells
+    const existingRoomId = anyInRoom(keys);
+    if (existingRoomId){
+      alert("At least one staged tile already belongs to a room. Dissolve or delete that room first (or stage only empty tiles).");
+      return;
+    }
+
+    const id = `R${data.meta.nextRoomId++}`;
+    const room = {
+      id,
+      name: `Room ${id}`,
+      kind: "basic",
+      c: "#3c6270",
+      n: "",
+      icon: "",
+      cells: keys.slice().sort()
+    };
+    data.rooms[id] = room;
+
+    // assign roomId to cells
+    for (const k of room.cells){
+      const [c, r] = k.split(",").map(Number);
+      const cell = ensureCell(c, r);
+      cell.roomId = id;
+
+      // repaint immediately
+      const rect = rectForKey(k);
+      if (rect) setVisual(rect, c, r);
+    }
+
+    save();
+    clearStage();
+
+    // select first tile of room and enter room edit mode
+    const firstK = room.cells[0];
+    const rect = rectForKey(firstK);
+    if (rect) selectCell(firstK, rect);
+    editTarget = "room";
+    modeEl.textContent = "Editing: Room";
+    selectedEl.textContent = `Room: ${room.name} (${room.cells.length} tiles)`;
+    refreshButtons();
+    renderRoomList();
+
+    groupMode = false;
+    renderStageStatus();
+  }
+
+  function dissolveRoom(roomId){
+    const room = roomById(roomId);
+    if (!room) return;
+
+    for (const k of room.cells){
+      const [c, r] = k.split(",").map(Number);
+      const cell = ensureCell(c, r);
+      cell.roomId = null;
+
+      const rect = rectForKey(k);
+      if (rect) setVisual(rect, c, r);
+    }
+
+    delete data.rooms[roomId];
+    save();
+
+    // after dissolve, stay on currently selected cell, but flip to cell edit
+    editTarget = "cell";
+    modeEl.textContent = "Editing: Cell";
+    selectedEl.textContent = selectedCellKey ? `Cell: ${selectedCellKey}` : "No selection";
+    refreshButtons();
+    renderRoomList();
+  }
+
+  function deleteCurrentRoom(){
+    const room = getCurrentRoom();
+    if (!room) return;
+    if (!confirm(`Delete "${room.name}"? (Tiles will become ungrouped)`)) return;
+    dissolveRoom(room.id);
+  }
+
+  function getCurrentCell(){
+    if (!selectedCellKey) return null;
+    const [c, r] = selectedCellKey.split(",").map(Number);
+    return ensureCell(c, r);
+  }
+
+  function getCurrentRoom(){
+    const cell = getCurrentCell();
+    if (!cell?.roomId) return null;
+    return roomById(cell.roomId);
+  }
+
+  function applyCellMark({ icon = null, color = null }) {
+    if (!selectedCellKey || !selectedRect) return;
+
+    // IMPORTANT: cell-only, never touch rooms
+    // editTarget = "cell";
+
+    const cell = getCurrentCell();
+    if (!cell) return;
+
+    if (icon !== null) cell.iconOverride = icon;
+    if (color !== null) cell.c = color;
+
+    const [c, r] = selectedCellKey.split(",").map(Number);
+    setVisual(selectedRect, c, r);
+    setSelected(selectedRect, true);
+
+    save();
+  }
+
+  // --- panel bindings ---
+  function applyColor(color){
+    if (!selectedCellKey || !selectedRect) return;
+    const cell = getCurrentCell();
+
+    if (editTarget === "room"){
+      const room = getCurrentRoom();
+      if (!room) return;
+      room.c = color;
+      // repaint all room cells
+      for (const k of room.cells){
+        const [c, r] = k.split(",").map(Number);
+        const rect = rectForKey(k);
+        if (rect) setVisual(rect, c, r);
+      }
+    } else {
+      cell.c = color;
+      const [c, r] = selectedCellKey.split(",").map(Number);
+      setVisual(selectedRect, c, r);
+      setSelected(selectedRect, true);
+    }
+
+    save();
+    renderRoomList();
+  }
+
+  function applyIcon(icon){
+    if (!selectedCellKey || !selectedRect) return;
+    const cell = getCurrentCell();
+    const val = icon || "";
+
+    if (editTarget === "room"){
+      const room = getCurrentRoom();
+      if (!room) return;
+      room.icon = val;
+      for (const k of room.cells){
+        const [c, r] = k.split(",").map(Number);
+        const rect = rectForKey(k);
+        if (rect && rect._cellIcon){
+          rect._cellIcon.textContent = val;
+          rect._cellIcon.style.display = val ? "block" : "none";
+        }
+      }
+    } else {
+      cell.icon = val;
+      if (selectedRect._cellIcon){
+        selectedRect._cellIcon.textContent = val;
+        selectedRect._cellIcon.style.display = val ? "block" : "none";
+      }
+    }
+
+    save();
+    renderRoomList();
+  }
+
+  function applyNotes(notes){
+    if (!selectedCellKey) return;
+    const cell = getCurrentCell();
+
+    if (editTarget === "room"){
+      const room = getCurrentRoom();
+      if (!room) return;
+      room.n = notes;
+    } else {
+      cell.n = notes;
+    }
+
+    save();
+  }
+
+  function applyRoomName(name){
+    const room = getCurrentRoom();
+    if (!room) return;
+    room.name = name || room.name;
+    save();
+    renderRoomList();
+    selectedEl.textContent = `Room: ${room.name} (${room.cells.length} tiles)`;
+  }
+
+  function applyRoomKind(kind) {
+    const room = getCurrentRoom();
+    if (!room) return;
+
+    room.kind = kind || "basic";
+
+    // OVERRIDE color based on type
+    const newColor = ROOM_KIND_COLORS[room.kind] || "#3c6270";
+    room.c = newColor;
+
+    // repaint all tiles in the room immediately
+    for (const k of room.cells) {
+      const [c, r] = k.split(",").map(Number);
+      const rect = rectForKey(k);
+      if (rect) setVisual(rect, c, r);
+    }
+
+    save();
+    renderRoomList();
+  }
+
+  function clearSelectedCell(){
+    if (!selectedCellKey || !selectedRect) return;
+    const cell = getCurrentCell();
+    if (!cell) return;
+
+    // If in a room, only clear the per-cell mark overlays (not the room itself)
+    if (cell.roomId) {
+      cell.c = null;
+      cell.iconOverride = null; // back to inheriting room icon
+      save();
+      const [c, r] = selectedCellKey.split(",").map(Number);
+      setVisual(selectedRect, c, r);
+      setSelected(selectedRect, true);
+      return;
+    }
+
+    cell.c = null;
+    cell.icon = "";
+    // cell.n = "";
+    save();
+
+    const [c, r] = selectedCellKey.split(",").map(Number);
+    setVisual(selectedRect, c, r);
+    setSelected(selectedRect, true);
+  }
+
+  // --- room list UI ---
+  function renderRoomList(){
+    roomListEl.innerHTML = "";
+    const rooms = Object.values(data.rooms).sort((a,b) => a.id.localeCompare(b.id));
+    if (!rooms.length){
+      roomListEl.innerHTML = `<div class="small">No rooms yet. Stage tiles with <kbd>Shift</kbd>+Click, then create a room.</div>`;
+      return;
+    }
+
+    for (const room of rooms){
+      const div = document.createElement("div");
+      div.className = "roomItem";
+      div.innerHTML = `
+        <div class="title">
+          <div class="name">${escapeHtml(room.name)}</div>
+          <div class="small">${room.id}</div>
+        </div>
+        <div class="meta">${escapeHtml(room.kind)} • ${room.cells.length} tiles</div>
+      `;
+      div.addEventListener("click", () => {
+        if (groupMode) return;
+        // select first cell of that room
+        const k = room.cells[0];
+        const rect = rectForKey(k);
+        if (rect) selectCell(k, rect);
+        editTarget = "room";
+        modeEl.textContent = "Editing: Room";
+        selectedEl.textContent = `Room: ${room.name} (${room.cells.length} tiles)`;
+        notesEl.value = room.n || "";
+        roomNameEl.value = room.name || "";
+        roomKindEl.value = room.kind || "basic";
+        refreshButtons();
+      });
+      roomListEl.appendChild(div);
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, ch => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[ch]));
+  }
+
+  // --- stage status / buttons ---
+  function renderStageStatus() {
+    const n = staged.size;
+    const contiguous = n ? isContiguous(Array.from(staged)) : true;
+
+    titleEl.textContent = hexKey ? `DungeonTracker • ${hexKey}` : "DungeonTracker";
+
+    // Button behavior:
+    // - groupMode OFF: button says "Group" and is enabled
+    // - groupMode ON + 0 tiles: button says "Cancel Group" and is enabled
+    // - groupMode ON + tiles: button says "Create Room" and is enabled only if contiguous
+    if (!groupMode) {
+      createRoomBtn.textContent = "Group";
+      createRoomBtn.disabled = false;
+    } else if (n === 0) {
+      createRoomBtn.textContent = "Cancel Group";
+      createRoomBtn.disabled = false;
+    } else {
+      createRoomBtn.textContent = "Create Room";
+      createRoomBtn.disabled = !contiguous;
+    }
+
+    // (optional debug message you had)
+    const msg = n
+      ? `Staged tiles: ${n} • ${contiguous ? "contiguous ✅" : "not contiguous ❌"}`
+      : "Staged tiles: 0";
+    selectedEl.dataset.stage = msg;
+  }
+
+  function refreshButtons(){
+    const cell = getCurrentCell();
+    const room = getCurrentRoom();
+
+    clearCellBtn.disabled = !cell;
+    dissolveRoomBtn.disabled = !room;
+    deleteRoomBtn.disabled = !room;
+    roomNameEl.disabled = !room;
+    roomKindEl.disabled = !room;
+  }
+
+  // --- export / import / wipe ---
+  function doExport(){
+    const blob = new Blob([JSON.stringify({ cols:COLS, rows:ROWS, data }, null, 2)], { type:"application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = hexKey ? `dungeon_${hexKey}.json` : "dungeontracker.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function doImport(file){
+    const text = await file.text();
+    const obj = JSON.parse(text);
+    if (!obj?.data?.cells || !obj?.data?.rooms) return alert("Invalid file.");
+
+    // replace data in place
+    data.cells = obj.data.cells;
+    data.rooms = obj.data.rooms;
+    data.meta  = obj.data.meta || { nextRoomId: 1 };
+
+    save();
+    rebuildAll();
+    clearStage();
+    selectedCellKey = null;
+    if (selectedRect) setSelected(selectedRect, false);
+    selectedRect = null;
+    modeEl.textContent = "Editing: Cell";
+    selectedEl.textContent = "Click a tile…";
+    notesEl.value = "";
+    roomNameEl.value = "";
+    roomKindEl.value = "basic";
+    refreshButtons();
+    renderRoomList();
+  }
+
+  function doWipe(){
+    if (!confirm("Wipe local dungeon save?")) return;
+    data.cells = {};
+    data.rooms = {};
+    data.meta = { nextRoomId: 1 };
+    save();
+    rebuildAll();
+    clearStage();
+    selectedCellKey = null;
+    if (selectedRect) setSelected(selectedRect, false);
+    selectedRect = null;
+    modeEl.textContent = "Editing: Cell";
+    selectedEl.textContent = "Click a tile…";
+    notesEl.value = "";
+    roomNameEl.value = "";
+    roomKindEl.value = "basic";
+    refreshButtons();
+    renderRoomList();
+  }
+
+  function rebuildAll(){
+    // repaint every cell (cheap enough for 2500)
+    for (let r=0; r<ROWS; r++){
+      for (let c=0; c<COLS; c++){
+        const k = key(c,r);
+        const rect = rectForKey(k);
+        if (rect) setVisual(rect, c, r);
+      }
+    }
+  }
+
+  // --- wire panel events ---
+  cellMarksEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-icon]");
+    if (!btn) return;
+    applyCellMark({ icon: btn.dataset.icon });
+  });
+
+  cellColorEl.addEventListener("input", () => {
+    applyCellMark({ color: cellColorEl.value });
+  });
+
+
+  notesEl.addEventListener("input", () => applyNotes(notesEl.value));
+
+  roomNameEl.addEventListener("input", () => applyRoomName(roomNameEl.value));
+  roomKindEl.addEventListener("change", () => applyRoomKind(roomKindEl.value));
+
+  createRoomBtn.addEventListener("click", () => {
+    // If not in group mode, this button ENTERS group mode
+    if (!groupMode) {
+      enterGroupMode();
+      return;
+    }
+
+    // In group mode:
+    // - if no tiles staged, it CANCELS group mode
+    if (staged.size === 0) {
+      exitGroupMode();
+      return;
+    }
+
+    // - otherwise, it tries to create the room
+    createRoomFromStage();
+  });
+  dissolveRoomBtn.addEventListener("click", () => {
+    const room = getCurrentRoom();
+    if (!room) return;
+    if (!confirm(`Dissolve "${room.name}"? (Tiles remain, but are ungrouped)`)) return;
+    dissolveRoom(room.id);
+  });
+  deleteRoomBtn.addEventListener("click", () => deleteCurrentRoom());
+  clearCellBtn.addEventListener("click", () => clearSelectedCell());
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => doExport());
+  }
+  
+  if (importBtn && importFileEl) {
+    importBtn.addEventListener("click", () => importFileEl.click());
+    importFileEl.addEventListener("change", async () => {
+      const f = importFileEl.files?.[0];
+      if (!f) return;
+      await doImport(f);
+      alert("Imported.");
+      importFileEl.value = "";
+    });
+  }
+  wipeBtn.addEventListener("click", () => doWipe());
+
+  if (exitBtn){
+    exitBtn.addEventListener("click", () => {
+      if (onExit) onExit(getPublicState());
+    });
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape"){
+      clearStage();
+      if (groupMode) {
+        // If you hit Esc with nothing staged, treat it as leaving group mode
+        if (staged.size === 0) groupMode = false;
+        renderStageStatus();
+      }
+      // if you were editing a room, Esc flips back to cell edit (keeping selection)
+      if (editTarget === "room"){
+        editTarget = "cell";
+        modeEl.textContent = "Editing: Cell";
+        selectedEl.textContent = selectedCellKey ? `Cell: ${selectedCellKey}` : "Click a tile…";
+        const cell = getCurrentCell();
+        if (cell) {
+          cellColorEl.value = cell.c || "#3c6270";
+          notesEl.value = cell.n || "";
+        }
+        refreshButtons();
+      }
+    }
+    if (e.key === "Enter"){
+      if (!createRoomBtn.disabled) createRoomFromStage();
+    }
+  });
+
+  // initial UI
+  titleEl.textContent = hexKey ? `DungeonTracker • ${hexKey}` : "DungeonTracker";
+  modeEl.textContent = "Editing: Cell";
+  selectedEl.textContent = "Click a tile…";
+  renderStageStatus();
+  refreshButtons();
+  renderRoomList();
+
+  // public API (for later wiring into your hex map)
+  function getPublicState(){
+    // enough to tie back to a hex key later
+    return JSON.parse(JSON.stringify(data));
+  }
+
+  function loadState(state){
+    if (!state?.cells || !state?.rooms) return;
+    data.cells = state.cells;
+    data.rooms = state.rooms;
+    data.meta  = state.meta || { nextRoomId: 1 };
+    save();
+    rebuildAll();
+    renderRoomList();
+  }
+
+  function destroy(){
+    // minimal: just clear svg + remove listeners you added externally
+    svgEl.innerHTML = "";
+  }
+
+  return { getState: getPublicState, loadState, destroy, clearStage };
+}

@@ -1,4 +1,4 @@
-<!-- Map Buddy version 02-23-02-->
+<!-- Map Buddy version 02-23-03-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -244,6 +244,7 @@ button { box-sizing: border-box; }
       <textarea id="notes" placeholder="What’s here? Encounters, landmarks, factions…"></textarea>
 
       <div class="row actions-row">
+        <button id="openDungeonBtn" type="button">Open Dungeon</button>
         <button id="exportBtn" type="button">Export Campaign</button>
         <button id="importBtn" type="button">Import Campaign</button>
         <button id="wipeBtn" type="button">Wipe Campaign</button>
@@ -300,6 +301,9 @@ window.addEventListener("DOMContentLoaded", () => {
   let selectedKey = null;
   let selectedPoly = null;
 
+  const params = new URLSearchParams(location.search);
+  const returnHex = params.get("hex");
+
 // helper functions
   // save() — writes the data object to localStorage
   // key(c, r) — turns a column / row into a stable string like "12,8"
@@ -315,6 +319,35 @@ window.addEventListener("DOMContentLoaded", () => {
     if (data[k].icon === undefined) data[k].icon = "";
     return data[k];
   }
+
+  function normalizeIcon(s) {
+    // strips emoji variation selectors so "🏰" / "🏰︎" / "🏰️" compare the same
+    return String(s || "").replace(/[\uFE0E\uFE0F]/g, "");
+  }
+
+  function isDungeonEnabledByIcon(h) {
+    return normalizeIcon(h?.icon) === "🏰";
+  }
+
+  function refreshDungeonBtn() {
+    const btn = document.getElementById("openDungeonBtn");
+    if (!btn) return;
+
+    if (!selectedKey) {
+      btn.disabled = true;
+      btn.title = "Select a hex first.";
+      return;
+    }
+
+    const h = data[selectedKey] || null;
+    const ok = isDungeonEnabledByIcon(h);
+
+    btn.disabled = !ok;
+    btn.title = ok
+      ? "Open the dungeon linked to this hex."
+      : 'Add the "🏰︎" icon to enable a dungeon on this hex.';
+  }
+
 // ********************************************************************
 // the camera system for panning and zooming upon double click of a hex
 
@@ -476,6 +509,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     save();
     setSelected(selectedPoly, true);
+    refreshDungeonBtn();
   }
 
   iconGrid.innerHTML = "";
@@ -523,6 +557,8 @@ window.addEventListener("DOMContentLoaded", () => {
     } else {
       lastSelectedKey = selectedKey;
     }
+
+    refreshDungeonBtn();
 
     if (!baseViewBox) return;
 
@@ -632,6 +668,15 @@ window.addEventListener("DOMContentLoaded", () => {
     paletteEl.appendChild(d);
   });
 
+  document.getElementById("openDungeonBtn").addEventListener("click", () => {
+    if (!selectedKey) return alert("Select a hex first.");
+    const h = data[selectedKey] || null;
+    if (!isDungeonEnabledByIcon(h)) {
+      return alert('This hex is not dungeon-enabled. Add the "🏰︎" icon first.');
+    }
+    window.location.href = `dungeon.html?hex=${encodeURIComponent(selectedKey)}`;
+  });
+
   // Campaign export/import/wipe (hex + all per-hex dungeons)
   document.getElementById("exportBtn").addEventListener("click", () => {
     exportCampaign({
@@ -703,6 +748,12 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   buildGrid();
+
+  if (returnHex && data.hasOwnProperty(returnHex)) {
+    const [c, r] = returnHex.split(",").map(Number);
+    const poly = grid.byCR.get(returnHex)?.poly;
+    if (poly) selectHex(c, r, poly);
+  }
 });
 </script>
 
