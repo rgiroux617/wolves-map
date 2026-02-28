@@ -1,4 +1,4 @@
-<!-- dungeontracker version 2-25-02 -->
+<!-- dungeontracker version 2-27-01 -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -105,6 +105,7 @@
 
     const params = new URLSearchParams(location.search);
     const hexKey = params.get("hex"); // expected format like "12,7"
+    const isAuthor = params.get("author") === "1";
 
     const panelEls = {
       titleEl: document.getElementById("dtTitle"),
@@ -144,9 +145,10 @@
       PAD: 18,
 
       onExit: () => {
+        const authorSuffix = isAuthor ? "&author=1" : "";
         window.location.href = hexKey
-          ? `index.html?hex=${encodeURIComponent(hexKey)}`
-          : "index.html";
+          ? `index.html?hex=${encodeURIComponent(hexKey)}${authorSuffix}`
+          : `index.html${isAuthor ? "?author=1" : ""}`;
       }
     });
 

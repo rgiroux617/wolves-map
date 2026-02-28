@@ -1,4 +1,4 @@
-<!-- Map Buddy version 02-26-02-->
+<!-- Map Buddy version 02-27-01-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -58,6 +58,9 @@ button { margin-top:10px; padding:8px 10px; border:1px solid #bbb; border-radius
 button:hover { background:#eee; }
 
 .hint { font-size:12px; color:#666; margin-top:6px; }
+
+.bugmanText { font-size:18px; color:#ffffff; margin-top:6px; }
+
 .palette { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
 
 button { box-sizing: border-box; }
@@ -138,13 +141,24 @@ button { box-sizing: border-box; }
 
 #closePanel { display:none; width:100%; }
 
-/* Export/Import/Wipe row tweaks */
-.actions-row button{
-  margin-top: 0;
-  font-size: 20px;
-  padding: 6px 8px;
+/* Campaign/Dungeon buttons: 2x2 grid */
+.actions-row{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+  margin-top:10px;
 }
-.actions-row > *{ flex: 1; }
+.actions-row button{
+  margin-top:0;
+  font-size:20px;
+  padding:6px 8px;
+  width:100%;
+}
+
+.dungeonBtn:enabled {
+  color: #c40000; /* deep red */
+  font-weight: 600;
+}
 
 #hexId {
   color: #ffffff;
@@ -218,11 +232,12 @@ button { box-sizing: border-box; }
       <div id="wrap">
         <!-- the "container for the hex grid generated in JS (buildGrid)" -->
         <svg id="grid"></svg>
+        <div id="status"></div>
       </div>
     </div>
 
     <div id="panel">
-      <div style="font-weight:200; font-size:48px; color:#ffffff; text-align:center;">The Journey</div>
+      <div style="font-weight:200; font-size:30px; color:#ffffff; text-align:center;">A Journey</div>
       <div style="font-weight:200; font-size:24px; color:#ffffff; text-align:center;">of</div>
       <div style="font-weight:200; font-size:48px; color:#ffffff; text-align:center;">The Implication</div>
 
@@ -245,16 +260,17 @@ button { box-sizing: border-box; }
       <label>Notes</label>
       <textarea id="notes" placeholder="What’s here? Encounters, landmarks, factions…"></textarea>
 
-      <div class="row actions-row">
-        <button id="openDungeonBtn" type="button">Open Dungeon</button>
+      <div class="actions-row">
+        <button id="openDungeonBtn" class="dungeonBtn" type="button">Open Dungeon</button>
         <button id="exportBtn" type="button">Export Campaign</button>
         <button id="importBtn" type="button">Import Campaign</button>
         <button id="wipeBtn" type="button">Wipe Campaign</button>
-        <input id="importFile" type="file" accept="application/json" style="display:none;" />
       </div>
+      <input id="importFile" type="file" accept="application/json" style="display:none;" />
 
       <button id="closePanel" type="button">Close</button>
-      <div class="hint">Autosaves to this browser (localStorage).</div>
+      <br>
+      <div class="bugmanText">Map Buddy ©2026 Bugman Industries LLC</div>
     </div>
 
 <script type="module">
@@ -289,11 +305,6 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const SEED_URL = "./seeds/campaign_default.json";
 
-  function isAuthorMode() {
-    const p = new URLSearchParams(location.search);
-    return p.get("author") === "1";
-  }
-
   const ZOOM_FACTOR = 0.6;
   const ZOOM_IN_MS  = 360;
   const ZOOM_OUT_MS = 420;
@@ -305,12 +316,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   let data = {};
 
-  // Readers: always overwrite local state from the published seed
-  if (!isAuthorMode()) {
+  // Readers: load seed ONLY if no campaign exists yet
+  if (!isAuthorMode() && !localStorage.getItem(KEY)) {
     await importCampaignFromUrl({
       url: SEED_URL,
       hexStorageKey: KEY,
-      cacheBust: `v=${Date.now()}` // prevents iPad/Safari stale caching
+      cacheBust: `v=${Date.now()}`
     });
   }
 
@@ -704,7 +715,8 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!isDungeonEnabledByIcon(h)) {
       return alert('This hex is not dungeon-enabled. Add the "🏰︎" icon first.');
     }
-    window.location.href = `dungeon.html?hex=${encodeURIComponent(selectedKey)}`;
+    const authorSuffix = isAuthorMode() ? "&author=1" : "";
+    window.location.href = `dungeon.html?hex=${encodeURIComponent(selectedKey)}${authorSuffix}`;
   });
 
   // Campaign export/import/wipe (hex + all per-hex dungeons)
