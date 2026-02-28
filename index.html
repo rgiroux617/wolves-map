@@ -304,6 +304,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const KEY = "hexmap_51x32_offset_v1";
 
   const SEED_URL = "./seeds/campaign_default.json";
+  const SEED_VER = "2026-02-27-02"; // bump this when you update the seed
 
   const ZOOM_FACTOR = 0.6;
   const ZOOM_IN_MS  = 360;
@@ -321,7 +322,7 @@ window.addEventListener("DOMContentLoaded", () => {
     await importCampaignFromUrl({
       url: SEED_URL,
       hexStorageKey: KEY,
-      cacheBust: `v=${Date.now()}`
+      cacheBust: `v=${SEED_VER}`
     });
   }
 
